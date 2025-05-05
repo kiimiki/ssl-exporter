@@ -1,0 +1,6 @@
+{
+    "domains": [
+        "google.com",
+        "ftp://google.com"
+    ]
+}

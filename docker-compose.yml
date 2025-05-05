@@ -1,0 +1,26 @@
+version: '3.9'
+
+services:
+  ssl-exporter-g:
+    image: ssl-exporter-g:1.0
+    deploy:
+      mode: replicated
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+    ports:
+      - "9115:9115"
+    networks:
+      - monitoring
+    configs:
+      - source: domains
+        target: /app/domains.json
+
+networks:
+  monitoring:
+    external: true
+
+configs:
+  domains:
+    external: true
+    
