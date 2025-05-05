@@ -3,6 +3,7 @@
 https://github.com/kiimiki/ssl-exporter.git
 dashboard.json
 ```
+![alt text](dashboard.png)
 # 🛡️ SSL Exporter
 
 Prometheus-compatible exporter that scans domains for SSL certificate expiration.  
