@@ -1,26 +1,38 @@
-version: '3.9'
+version: "3.8"
 
 services:
-  ssl-exporter-g:
-    image: ssl-exporter-g:1.0
+  ssl-exporter:
+    image: imitatop/ssl-exporter_mongo:latest
+    ports:
+      - "9115:9115"
+    networks:
+      - proxy-net
+      - proxy-bot
+    secrets:
+      - source: mongo_user_ssl_checker
+        target: mongo_user
+      - source: mongo_password_checker
+        target: mongo_password
+    environment:
+      MONGO_HOST: db_mongo:27017
+      MONGO_DB: ssl
+      MONGO_COLLECTION: domains
+      MONGO_USER_FILE: /run/secrets/mongo_user
+      MONGO_PASSWORD_FILE: /run/secrets/mongo_password
     deploy:
       mode: replicated
       replicas: 1
       restart_policy:
         condition: on-failure
-    ports:
-      - "9115:9115"
-    networks:
-      - monitoring
-    configs:
-      - source: domains
-        target: /app/domains.json
+
+secrets:
+  mongo_user_ssl_checker:
+    external: true
+  mongo_password_checker:
+    external: true
 
 networks:
-  monitoring:
+  proxy-net:
     external: true
-
-configs:
-  domains:
+  proxy-bot:
     external: true
-    
