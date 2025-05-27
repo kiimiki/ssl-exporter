@@ -109,3 +109,10 @@ func getFTPCert(domain string) (time.Time, time.Time, error) {
 	record(domain+"_ftp", true, time.Since(start).Seconds(), nil)
 	return certs[0].NotBefore, certs[0].NotAfter, nil
 }
+func GetFTPCertificateTimestamps(domain string) (time.Time, time.Time, error) {
+	return GetCertificate(domain, "ftp")
+}
+
+func GetCertificateTimestamps(domain string) (time.Time, time.Time, error) {
+	return GetCertificate(domain, "https")
+}
