@@ -19,6 +19,8 @@ services:
       MONGO_COLLECTION: domains
       MONGO_USER_FILE: /run/secrets/mongo_user
       MONGO_PASSWORD_FILE: /run/secrets/mongo_password
+      ADMIN_USER: admin
+      ADMIN_PASSWORD: admin
     deploy:
       mode: replicated
       replicas: 1
