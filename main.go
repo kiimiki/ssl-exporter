@@ -1,30 +1,24 @@
 package main
 
 import (
-	"log"
-	"os"
 	"time"
 
 	"ssl-exporter/metrics"
 	"ssl-exporter/server"
 )
 
-const (
-	domainsFile = "domains.json"
-	interval    = 5 * time.Minute
-)
+const interval = 5 * time.Minute
 
 func main() {
-	domains, err := metrics.LoadDomains(domainsFile)
-	if err != nil || len(domains) == 0 {
-		log.Fatalf("Error loading domains: %v", err)
-		os.Exit(1)
-	}
+	// run metrics generation immediately
+	metrics.Generate()
 
+	// start HTTP server
 	go server.Start()
 
+	// update metrics every 5 minutes
 	for {
-		metrics.Generate(domains)
 		time.Sleep(interval)
+		metrics.Generate()
 	}
 }
