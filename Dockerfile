@@ -2,7 +2,6 @@ FROM golang:1.20-alpine AS builder
 
 WORKDIR /app
 
-# Copy only necessary files and directories
 COPY go.mod ./
 RUN go mod download
 
@@ -11,20 +10,18 @@ COPY ssl/ ./ssl/
 COPY server/ ./server/
 COPY metrics/ ./metrics/
 
-# Build the binary
+# Install MongoDB driver explicitly
+RUN go get go.mongodb.org/mongo-driver/mongo@v1.13.1
+
 RUN go build -o ssl-exporter main.go
 
 FROM alpine:latest
 
 WORKDIR /app
 
-# Copy the compiled binary
 COPY --from=builder /app/ssl-exporter .
-
-# Copy config files
 COPY configs/ ./configs/
 
-# Expose metrics port
 EXPOSE 9115
 
 CMD ["./ssl-exporter"]
