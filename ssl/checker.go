@@ -37,7 +37,7 @@ func record(domain string, ok bool, dur float64, err error) {
 
 func GetCertificate(domain, proto string) (time.Time, time.Time, error) {
 	if proto == "ftp" {
-		return getFTPAutoTLSCert(domain)
+		return getFTPCertAutoDetect(domain)
 	}
 	return getTLScert(domain, "443")
 }
