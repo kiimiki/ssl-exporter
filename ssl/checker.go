@@ -4,7 +4,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net"
-	"strings"
 	"sync"
 	"time"
 )
@@ -38,7 +37,7 @@ func record(domain string, ok bool, dur float64, err error) {
 
 func GetCertificate(domain, proto string) (time.Time, time.Time, error) {
 	if proto == "ftp" {
-		return getFTPCert(domain)
+		return getFTPAutoTLSCert(domain)
 	}
 	return getTLScert(domain, "443")
 }
@@ -65,40 +64,54 @@ func getTLScert(domain, port string) (time.Time, time.Time, error) {
 	return certs[0].NotBefore, certs[0].NotAfter, nil
 }
 
-func getFTPCert(domain string) (time.Time, time.Time, error) {
+func getFTPCertAutoDetect(domain string) (time.Time, time.Time, error) {
 	start := time.Now()
+
+	// Шаг 1 — обычное подключение
 	conn, err := net.DialTimeout("tcp", domain+":21", 10*time.Second)
 	if err != nil {
 		record(domain+"_ftp", false, time.Since(start).Seconds(), err)
 		return time.Time{}, time.Time{}, err
 	}
-	defer conn.Close()
 
-	buf := make([]byte, 4096)
 	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	conn.Read(buf) // greeting
+	buf := make([]byte, 4096)
+	_, err = conn.Read(buf) // читаем баннер
+	if err != nil {
+		conn.Close()
+		goto tryAutoTLS
+	}
 
-	conn.Write([]byte("AUTH TLS\r\n"))
+	// Шаг 2 — пробуем AUTH TLS
+	_, err = conn.Write([]byte("AUTH TLS\r\n"))
+	if err != nil {
+		conn.Close()
+		goto tryAutoTLS
+	}
+
 	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	n, err := conn.Read(buf)
 	if err != nil {
-		record(domain+"_ftp", false, time.Since(start).Seconds(), err)
-		return time.Time{}, time.Time{}, err
-	}
-	resp := string(buf[:n])
-	if !strings.Contains(resp, "234") {
-		record(domain+"_ftp", false, time.Since(start).Seconds(), fmt.Errorf("AUTH TLS failed: %s", resp))
-		return time.Time{}, time.Time{}, fmt.Errorf("AUTH TLS failed: %s", resp)
+		conn.Close()
+		goto tryAutoTLS
 	}
 
+	resp := string(buf[:n])
+	if !strings.HasPrefix(resp, "234") {
+		conn.Close()
+		goto tryAutoTLS
+	}
+
+	// Шаг 3 — STARTTLS
 	tlsConn := tls.Client(conn, &tls.Config{
 		InsecureSkipVerify: true,
 		ServerName:         domain,
 	})
 	if err := tlsConn.Handshake(); err != nil {
-		record(domain+"_ftp", false, time.Since(start).Seconds(), err)
-		return time.Time{}, time.Time{}, err
+		conn.Close()
+		goto tryAutoTLS
 	}
+	defer tlsConn.Close()
 
 	certs := tlsConn.ConnectionState().PeerCertificates
 	if len(certs) == 0 {
@@ -108,11 +121,25 @@ func getFTPCert(domain string) (time.Time, time.Time, error) {
 
 	record(domain+"_ftp", true, time.Since(start).Seconds(), nil)
 	return certs[0].NotBefore, certs[0].NotAfter, nil
-}
-func GetFTPCertificateTimestamps(domain string) (time.Time, time.Time, error) {
-	return GetCertificate(domain, "ftp")
-}
 
-func GetCertificateTimestamps(domain string) (time.Time, time.Time, error) {
-	return GetCertificate(domain, "https")
+tryAutoTLS:
+	// fallback на auto-TLS
+	tlsConn, err := tls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp", domain+":21", &tls.Config{
+		InsecureSkipVerify: true,
+		ServerName:         domain,
+	})
+	if err != nil {
+		record(domain+"_ftp", false, time.Since(start).Seconds(), err)
+		return time.Time{}, time.Time{}, err
+	}
+	defer tlsConn.Close()
+
+	certs := tlsConn.ConnectionState().PeerCertificates
+	if len(certs) == 0 {
+		record(domain+"_ftp", false, time.Since(start).Seconds(), fmt.Errorf("no certificate"))
+		return time.Time{}, time.Time{}, fmt.Errorf("no certificate")
+	}
+
+	record(domain+"_ftp", true, time.Since(start).Seconds(), nil)
+	return certs[0].NotBefore, certs[0].NotAfter, nil
 }
