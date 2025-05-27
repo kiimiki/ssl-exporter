@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 	"time"
-	"ssl_exporter/ssl"
+	"ssl-exporter/ssl"
 )
 
 type DomainList struct {
