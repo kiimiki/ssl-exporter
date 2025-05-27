@@ -3,7 +3,7 @@ FROM golang:1.20-alpine AS builder
 WORKDIR /app
 
 # Copy only necessary files and directories
-COPY go.mod go.sum ./
+COPY go.mod ./
 RUN go mod download
 
 COPY main.go ./
