@@ -9,12 +9,12 @@ services:
       - proxy-net
       - proxy-bot
     secrets:
-      - source: mongo_user_ssl_checker
+      - source: mongo_root_username
         target: mongo_user
-      - source: mongo_password_checker
+      - source: mongo_root_password
         target: mongo_password
     environment:
-      MONGO_HOST: db_mongo:27017
+      MONGO_HOST: db_mongo
       MONGO_DB: ssl
       MONGO_COLLECTION: domains
       MONGO_USER_FILE: /run/secrets/mongo_user
@@ -28,9 +28,9 @@ services:
         condition: on-failure
 
 secrets:
-  mongo_user_ssl_checker:
+  mongo_root_username:
     external: true
-  mongo_password_checker:
+  mongo_root_password:
     external: true
 
 networks:
