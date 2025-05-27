@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -32,8 +33,8 @@ func getMongoURI() string {
 	}
 
 	return fmt.Sprintf("mongodb://%s:%s@%s",
-		strings.TrimSpace(string(user)),
-		strings.TrimSpace(string(pass)),
+		url.QueryEscape(strings.TrimSpace(string(user))),
+		url.QueryEscape(strings.TrimSpace(string(pass))),
 		host,
 	)
 }
