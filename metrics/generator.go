@@ -21,11 +21,13 @@ type DomainList struct {
 
 const metricsFile = "metrics"
 
-// getMongoURI builds MongoDB connection string using Docker Secrets and MONGO_HOST
 func getMongoURI() string {
-	user, err1 := os.ReadFile("/run/secrets/mongo_user")
-	pass, err2 := os.ReadFile("/run/secrets/mongo_password")
+	userFile := os.Getenv("MONGO_USER_FILE")
+	passFile := os.Getenv("MONGO_PASSWORD_FILE")
 	host := os.Getenv("MONGO_HOST")
+
+	user, err1 := os.ReadFile(userFile)
+	pass, err2 := os.ReadFile(passFile)
 
 	if err1 != nil || err2 != nil || host == "" {
 		log.Println("[WARN] Mongo credentials or host missing")
@@ -39,7 +41,6 @@ func getMongoURI() string {
 	)
 }
 
-// getDomains decides whether to load domains from MongoDB or JSON file
 func getDomains() []string {
 	mongoURI := getMongoURI()
 	mongoDB := os.Getenv("MONGO_DB")
@@ -60,7 +61,6 @@ func getDomains() []string {
 	return domains
 }
 
-// loadDomainsFromJSON reads domains from local domains.json file
 func loadDomainsFromJSON(path string) ([]string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -71,9 +71,8 @@ func loadDomainsFromJSON(path string) ([]string, error) {
 	return list.Domains, err
 }
 
-// loadDomainsFromMongo connects to MongoDB and retrieves all documents with "domain" field
 func loadDomainsFromMongo(uri, db, coll string) ([]string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	client, err := mongo.Connect(ctx, options.Client().ApplyURI(uri))
@@ -97,7 +96,6 @@ func loadDomainsFromMongo(uri, db, coll string) ([]string, error) {
 			}
 		}
 	}
-
 	if err := cursor.Err(); err != nil {
 		return nil, err
 	}
@@ -109,10 +107,8 @@ func loadDomainsFromMongo(uri, db, coll string) ([]string, error) {
 	return results, nil
 }
 
-// Generate loads domains and writes metrics to file
 func Generate() {
 	domains := getDomains()
-
 	log.Println("🔄 Generating metrics...")
 
 	content := "# HELP ssl_cert_days_left Days left to expiration\n" +
