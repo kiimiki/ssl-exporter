@@ -69,6 +69,7 @@ func getTLScert(domain, port string) (time.Time, time.Time, error) {
 func getFTPCertAutoDetect(domain string) (time.Time, time.Time, error) {
 	start := time.Now()
 	var certs []*x509.Certificate
+	var tlsConn *tls.Conn // <-- добавлено
 
 	conn, err := net.DialTimeout("tcp", domain+":21", 10*time.Second)
 	if err != nil {
@@ -103,7 +104,7 @@ func getFTPCertAutoDetect(domain string) (time.Time, time.Time, error) {
 		goto tryAutoTLS
 	}
 
-	tlsConn := tls.Client(conn, &tls.Config{
+	tlsConn = tls.Client(conn, &tls.Config{
 		InsecureSkipVerify: true,
 		ServerName:         domain,
 	})
@@ -123,7 +124,7 @@ func getFTPCertAutoDetect(domain string) (time.Time, time.Time, error) {
 	return certs[0].NotBefore, certs[0].NotAfter, nil
 
 tryAutoTLS:
-	tlsConn, err := tls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp", domain+":21", &tls.Config{
+	tlsConn, err = tls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp", domain+":21", &tls.Config{
 		InsecureSkipVerify: true,
 		ServerName:         domain,
 	})
