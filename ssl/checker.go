@@ -2,8 +2,10 @@ package ssl
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"time"
 )
@@ -66,8 +68,8 @@ func getTLScert(domain, port string) (time.Time, time.Time, error) {
 
 func getFTPCertAutoDetect(domain string) (time.Time, time.Time, error) {
 	start := time.Now()
+	var certs []*x509.Certificate
 
-	// Шаг 1 — обычное подключение
 	conn, err := net.DialTimeout("tcp", domain+":21", 10*time.Second)
 	if err != nil {
 		record(domain+"_ftp", false, time.Since(start).Seconds(), err)
@@ -76,13 +78,12 @@ func getFTPCertAutoDetect(domain string) (time.Time, time.Time, error) {
 
 	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	buf := make([]byte, 4096)
-	_, err = conn.Read(buf) // читаем баннер
+	_, err = conn.Read(buf)
 	if err != nil {
 		conn.Close()
 		goto tryAutoTLS
 	}
 
-	// Шаг 2 — пробуем AUTH TLS
 	_, err = conn.Write([]byte("AUTH TLS\r\n"))
 	if err != nil {
 		conn.Close()
@@ -102,7 +103,6 @@ func getFTPCertAutoDetect(domain string) (time.Time, time.Time, error) {
 		goto tryAutoTLS
 	}
 
-	// Шаг 3 — STARTTLS
 	tlsConn := tls.Client(conn, &tls.Config{
 		InsecureSkipVerify: true,
 		ServerName:         domain,
@@ -113,7 +113,7 @@ func getFTPCertAutoDetect(domain string) (time.Time, time.Time, error) {
 	}
 	defer tlsConn.Close()
 
-	certs := tlsConn.ConnectionState().PeerCertificates
+	certs = tlsConn.ConnectionState().PeerCertificates
 	if len(certs) == 0 {
 		record(domain+"_ftp", false, time.Since(start).Seconds(), fmt.Errorf("no certificate"))
 		return time.Time{}, time.Time{}, fmt.Errorf("no certificate")
@@ -123,7 +123,6 @@ func getFTPCertAutoDetect(domain string) (time.Time, time.Time, error) {
 	return certs[0].NotBefore, certs[0].NotAfter, nil
 
 tryAutoTLS:
-	// fallback на auto-TLS
 	tlsConn, err := tls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp", domain+":21", &tls.Config{
 		InsecureSkipVerify: true,
 		ServerName:         domain,
@@ -134,7 +133,7 @@ tryAutoTLS:
 	}
 	defer tlsConn.Close()
 
-	certs := tlsConn.ConnectionState().PeerCertificates
+	certs = tlsConn.ConnectionState().PeerCertificates
 	if len(certs) == 0 {
 		record(domain+"_ftp", false, time.Since(start).Seconds(), fmt.Errorf("no certificate"))
 		return time.Time{}, time.Time{}, fmt.Errorf("no certificate")
