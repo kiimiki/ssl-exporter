@@ -137,3 +137,11 @@ func tryAutoTLS(domain string, start time.Time) (time.Time, time.Time, error) {
 	record(domain+"_ftp", true, time.Since(start).Seconds(), nil)
 	return certs[0].NotBefore, certs[0].NotAfter, nil
 }
+
+func GetCertificateTimestamps(domain string) (time.Time, time.Time, error) {
+	return GetCertificate(domain, "https")
+}
+
+func GetFTPCertificateTimestamps(domain string) (time.Time, time.Time, error) {
+	return GetCertificate(domain, "ftp")
+}
