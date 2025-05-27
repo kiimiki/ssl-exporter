@@ -10,106 +10,102 @@ import (
 )
 
 var (
-	attempts  = make(map[string]int)
-	durations = make(map[string]float64)
-	failures  = make(map[string]float64)
-	errors    = make(map[string]string)
-	mu        sync.Mutex
+	mu       sync.Mutex
+	attempts = make(map[string]int)
+	success  = make(map[string]float64)
+	failures = make(map[string]float64)
+	errors   = make(map[string]string)
 )
 
-func GetAttemptMetrics() map[string]int             { return attempts }
-func GetDurationMetrics() map[string]float64        { return durations }
-func GetFailureDurationMetrics() map[string]float64 { return failures }
-func GetErrorMessages() map[string]string           { return errors }
+func GetAttempts() map[string]int             { return attempts }
+func GetSuccessDurations() map[string]float64 { return success }
+func GetFailureDurations() map[string]float64 { return failures }
+func GetErrors() map[string]string            { return errors }
 
-func recordMetrics(key string, success bool, duration float64, err error) {
+func record(domain string, ok bool, dur float64, err error) {
 	mu.Lock()
 	defer mu.Unlock()
-	attempts[key]++
-	if success {
-		durations[key] = duration
+	attempts[domain]++
+	if ok {
+		success[domain] = dur
 	} else {
-		failures[key] = duration
+		failures[domain] = dur
 		if err != nil {
-			errors[key] = err.Error()
+			errors[domain] = err.Error()
 		}
 	}
 }
 
-func GetCertificateTimestamps(domain string) (time.Time, time.Time, error) {
-	return getTLSCertificate(domain, "443", "https")
+func GetCertificate(domain, proto string) (time.Time, time.Time, error) {
+	if proto == "ftp" {
+		return getFTPCert(domain)
+	}
+	return getTLScert(domain, "443")
 }
 
-func GetFTPCertificateTimestamps(domain string) (time.Time, time.Time, error) {
-	startTime := time.Now()
-	key := domain + "_ftp"
-	serverName := strings.TrimPrefix(domain, "ftp://")
-
-	rawConn, err := net.DialTimeout("tcp", serverName+":21", 10*time.Second)
-	if err != nil {
-		recordMetrics(key, false, time.Since(startTime).Seconds(), err)
-		return time.Time{}, time.Time{}, err
-	}
-	defer rawConn.Close()
-
-	buff := make([]byte, 1024)
-	rawConn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	rawConn.Read(buff)
-
-	_, err = rawConn.Write([]byte("AUTH TLS\r\n"))
-	if err != nil {
-		recordMetrics(key, false, time.Since(startTime).Seconds(), err)
-		return time.Time{}, time.Time{}, err
-	}
-
-	rawConn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	n, err := rawConn.Read(buff)
-	if err != nil || !strings.HasPrefix(string(buff[:n]), "234") {
-		recordMetrics(key, false, time.Since(startTime).Seconds(), fmt.Errorf("AUTH TLS failed"))
-		return time.Time{}, time.Time{}, fmt.Errorf("AUTH TLS failed")
-	}
-
-	tlsConn := tls.Client(rawConn, &tls.Config{
-		InsecureSkipVerify: true,
-		ServerName:         serverName,
-	})
-	if err := tlsConn.Handshake(); err != nil {
-		recordMetrics(key, false, time.Since(startTime).Seconds(), err)
-		return time.Time{}, time.Time{}, err
-	}
-	defer tlsConn.Close()
-
-	certs := tlsConn.ConnectionState().PeerCertificates
-	if len(certs) == 0 {
-		recordMetrics(key, false, time.Since(startTime).Seconds(), fmt.Errorf("no certificate found"))
-		return time.Time{}, time.Time{}, fmt.Errorf("no certificate found")
-	}
-
-	recordMetrics(key, true, time.Since(startTime).Seconds(), nil)
-	return certs[0].NotBefore, certs[0].NotAfter, nil
-}
-
-func getTLSCertificate(domain, port, proto string) (time.Time, time.Time, error) {
-	startTime := time.Now()
-	key := domain + "_" + proto
-
-	dialer := &net.Dialer{Timeout: 10 * time.Second}
-	conn, err := tls.DialWithDialer(dialer, "tcp", domain+":"+port, &tls.Config{
+func getTLScert(domain, port string) (time.Time, time.Time, error) {
+	start := time.Now()
+	conn, err := tls.Dial("tcp", domain+":"+port, &tls.Config{
 		InsecureSkipVerify: true,
 		ServerName:         domain,
 	})
 	if err != nil {
-		recordMetrics(key, false, time.Since(startTime).Seconds(), err)
+		record(domain+"_https", false, time.Since(start).Seconds(), err)
 		return time.Time{}, time.Time{}, err
 	}
 	defer conn.Close()
 
 	certs := conn.ConnectionState().PeerCertificates
 	if len(certs) == 0 {
-		recordMetrics(key, false, time.Since(startTime).Seconds(), fmt.Errorf("no certificate found"))
-		return time.Time{}, time.Time{}, fmt.Errorf("no certificate found")
+		record(domain+"_https", false, time.Since(start).Seconds(), fmt.Errorf("no certificate"))
+		return time.Time{}, time.Time{}, fmt.Errorf("no certificate")
 	}
 
-	recordMetrics(key, true, time.Since(startTime).Seconds(), nil)
+	record(domain+"_https", true, time.Since(start).Seconds(), nil)
+	return certs[0].NotBefore, certs[0].NotAfter, nil
+}
+
+func getFTPCert(domain string) (time.Time, time.Time, error) {
+	start := time.Now()
+	conn, err := net.DialTimeout("tcp", domain+":21", 10*time.Second)
+	if err != nil {
+		record(domain+"_ftp", false, time.Since(start).Seconds(), err)
+		return time.Time{}, time.Time{}, err
+	}
+	defer conn.Close()
+
+	buf := make([]byte, 4096)
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	conn.Read(buf) // greeting
+
+	conn.Write([]byte("AUTH TLS\r\n"))
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	n, err := conn.Read(buf)
+	if err != nil {
+		record(domain+"_ftp", false, time.Since(start).Seconds(), err)
+		return time.Time{}, time.Time{}, err
+	}
+	resp := string(buf[:n])
+	if !strings.Contains(resp, "234") {
+		record(domain+"_ftp", false, time.Since(start).Seconds(), fmt.Errorf("AUTH TLS failed: %s", resp))
+		return time.Time{}, time.Time{}, fmt.Errorf("AUTH TLS failed: %s", resp)
+	}
+
+	tlsConn := tls.Client(conn, &tls.Config{
+		InsecureSkipVerify: true,
+		ServerName:         domain,
+	})
+	if err := tlsConn.Handshake(); err != nil {
+		record(domain+"_ftp", false, time.Since(start).Seconds(), err)
+		return time.Time{}, time.Time{}, err
+	}
+
+	certs := tlsConn.ConnectionState().PeerCertificates
+	if len(certs) == 0 {
+		record(domain+"_ftp", false, time.Since(start).Seconds(), fmt.Errorf("no certificate"))
+		return time.Time{}, time.Time{}, fmt.Errorf("no certificate")
+	}
+
+	record(domain+"_ftp", true, time.Since(start).Seconds(), nil)
 	return certs[0].NotBefore, certs[0].NotAfter, nil
 }
