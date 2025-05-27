@@ -69,7 +69,8 @@ func getTLScert(domain, port string) (time.Time, time.Time, error) {
 func getFTPCertAutoDetect(domain string) (time.Time, time.Time, error) {
 	start := time.Now()
 	var certs []*x509.Certificate
-	var tlsConn *tls.Conn // <-- добавлено
+	var tlsConn *tls.Conn
+	var resp string
 
 	conn, err := net.DialTimeout("tcp", domain+":21", 10*time.Second)
 	if err != nil {
@@ -98,7 +99,7 @@ func getFTPCertAutoDetect(domain string) (time.Time, time.Time, error) {
 		goto tryAutoTLS
 	}
 
-	resp := string(buf[:n])
+	resp = string(buf[:n])
 	if !strings.HasPrefix(resp, "234") {
 		conn.Close()
 		goto tryAutoTLS
