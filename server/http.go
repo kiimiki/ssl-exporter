@@ -3,15 +3,16 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"log"
 	"net/http"
 	"os"
 	"strings"
 	"time"
+	"io"
 
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 type payload struct {
@@ -19,7 +20,7 @@ type payload struct {
 }
 
 func Start() {
-	http.Handle("/metrics", http.StripPrefix("/metrics", http.FileServer(http.Dir("."))))
+	http.Handle("/metrics", promhttp.Handler())
 	http.HandleFunc("/admin/add", auth(addDomainHandler))
 	log.Println("📡 Listening on :9115")
 	log.Fatal(http.ListenAndServe(":9115", nil))
