@@ -3,16 +3,15 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"strings"
 	"time"
-	"io"
 
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 type payload struct {
@@ -20,13 +19,23 @@ type payload struct {
 }
 
 func Start() {
-	http.Handle("/metrics", promhttp.Handler())
+	http.HandleFunc("/metrics", serveCustomMetrics)
 	http.HandleFunc("/admin/add", auth(addDomainHandler))
 	log.Println("📡 Listening on :9115")
 	log.Fatal(http.ListenAndServe(":9115", nil))
 }
 
-// Basic auth middleware
+func serveCustomMetrics(w http.ResponseWriter, r *http.Request) {
+	data, err := os.ReadFile("metrics")
+	if err != nil {
+		log.Printf("❌ Failed to read metrics file: %v", err)
+		http.Error(w, "metrics unavailable", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write(data)
+}
+
 func auth(next http.HandlerFunc) http.HandlerFunc {
 	user := os.Getenv("ADMIN_USER")
 	pass := os.Getenv("ADMIN_PASSWORD")
@@ -41,7 +50,6 @@ func auth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// Handles POST /admin/add with JSON payload {"domain": "example.com"}
 func addDomainHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
@@ -96,7 +104,6 @@ func addDomainHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("OK"))
 }
 
-// getMongoURI builds MongoDB connection string using Docker Secrets and MONGO_HOST
 func getMongoURI() string {
 	user, err1 := os.ReadFile("/run/secrets/mongo_user")
 	pass, err2 := os.ReadFile("/run/secrets/mongo_password")
