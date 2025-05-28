@@ -2,9 +2,7 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"html/template"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -48,38 +46,10 @@ func adminPageHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	uri := getMongoURI()
-	db := os.Getenv("MONGO_DB")
-	coll := os.Getenv("MONGO_COLLECTION")
-
-	if uri == "" || db == "" || coll == "" {
-		http.Error(w, "MongoDB not configured", http.StatusInternalServerError)
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	client, err := mongo.Connect(ctx, options.Client().ApplyURI(uri))
+	domains, err := fetchDomains()
 	if err != nil {
-		http.Error(w, "Mongo connect error", http.StatusInternalServerError)
+		http.Error(w, "Failed to load domains", http.StatusInternalServerError)
 		return
-	}
-	defer client.Disconnect(ctx)
-
-	cursor, err := client.Database(db).Collection(coll).Find(ctx, map[string]interface{}{})
-	if err != nil {
-		http.Error(w, "Mongo query error", http.StatusInternalServerError)
-		return
-	}
-	defer cursor.Close(ctx)
-
-	var domains []string
-	for cursor.Next(ctx) {
-		var doc map[string]interface{}
-		if val, ok := doc["domain"].(string); ok {
-			domains = append(domains, val)
-		}
 	}
 
 	tmpl := template.Must(template.ParseFiles("templates/admin.html"))
@@ -138,6 +108,47 @@ func addDomainHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.Redirect(w, r, "/admin", http.StatusSeeOther)
+}
+
+func fetchDomains() ([]string, error) {
+	uri := getMongoURI()
+	db := os.Getenv("MONGO_DB")
+	coll := os.Getenv("MONGO_COLLECTION")
+
+	if uri != "" && db != "" && coll != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		client, err := mongo.Connect(ctx, options.Client().ApplyURI(uri))
+		if err == nil {
+			defer client.Disconnect(ctx)
+			cursor, err := client.Database(db).Collection(coll).Find(ctx, map[string]interface{}{})
+			if err == nil {
+				var domains []string
+				defer cursor.Close(ctx)
+				for cursor.Next(ctx) {
+					var doc map[string]interface{}
+					cursor.Decode(&doc)
+					if val, ok := doc["domain"].(string); ok {
+						domains = append(domains, val)
+					}
+				}
+				return domains, nil
+			}
+		}
+	}
+
+	// fallback to domains.json
+	data, err := os.ReadFile("configs/domains.json")
+	if err != nil {
+		return nil, err
+	}
+
+	var parsed struct {
+		Domains []string `json:"domains"`
+	}
+	err = json.Unmarshal(data, &parsed)
+	return parsed.Domains, err
 }
 
 func getMongoURI() string {
