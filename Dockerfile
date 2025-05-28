@@ -12,7 +12,6 @@ COPY metrics/ ./metrics/
 
 # Установка зависимостей
 RUN go get go.mongodb.org/mongo-driver/mongo@v1.13.1
-RUN go get github.com/prometheus/client_golang/prometheus/promhttp@v1.16.0
 
 # 🔧 Добавь tidy — он подтянет всё нужное
 RUN go mod tidy
