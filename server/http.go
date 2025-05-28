@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"html/template"
 	"io"
 	"log"
 	"net/http"
@@ -14,26 +15,17 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-type payload struct {
-	Domain string `json:"domain"`
-}
-
 func Start() {
-	http.HandleFunc("/metrics", serveCustomMetrics)
+	http.Handle("/metrics", http.HandlerFunc(metricsHandler))
+	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
+	http.HandleFunc("/admin", auth(adminPageHandler))
 	http.HandleFunc("/admin/add", auth(addDomainHandler))
 	log.Println("📡 Listening on :9115")
 	log.Fatal(http.ListenAndServe(":9115", nil))
 }
 
-func serveCustomMetrics(w http.ResponseWriter, r *http.Request) {
-	data, err := os.ReadFile("metrics")
-	if err != nil {
-		log.Printf("❌ Failed to read metrics file: %v", err)
-		http.Error(w, "metrics unavailable", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Write(data)
+func metricsHandler(w http.ResponseWriter, r *http.Request) {
+	http.ServeFile(w, r, "metrics")
 }
 
 func auth(next http.HandlerFunc) http.HandlerFunc {
@@ -50,27 +42,9 @@ func auth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func addDomainHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
+func adminPageHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var p payload
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, "Failed to read body", http.StatusBadRequest)
-		return
-	}
-	defer r.Body.Close()
-
-	if err := json.Unmarshal(body, &p); err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
-		return
-	}
-	p.Domain = strings.TrimSpace(p.Domain)
-	if p.Domain == "" {
-		http.Error(w, "Domain required", http.StatusBadRequest)
 		return
 	}
 
@@ -79,38 +53,99 @@ func addDomainHandler(w http.ResponseWriter, r *http.Request) {
 	coll := os.Getenv("MONGO_COLLECTION")
 
 	if uri == "" || db == "" || coll == "" {
-		http.Error(w, "MongoDB env missing", http.StatusInternalServerError)
+		http.Error(w, "MongoDB not configured", http.StatusInternalServerError)
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	client, err := mongo.Connect(ctx, options.Client().ApplyURI(uri))
 	if err != nil {
-		http.Error(w, "Mongo connection error", http.StatusInternalServerError)
+		http.Error(w, "Mongo connect error", http.StatusInternalServerError)
 		return
 	}
 	defer client.Disconnect(ctx)
 
-	_, err = client.Database(db).Collection(coll).InsertOne(ctx, map[string]interface{}{"domain": p.Domain})
+	cursor, err := client.Database(db).Collection(coll).Find(ctx, map[string]interface{}{})
 	if err != nil {
-		http.Error(w, "Mongo insert error", http.StatusInternalServerError)
+		http.Error(w, "Mongo query error", http.StatusInternalServerError)
+		return
+	}
+	defer cursor.Close(ctx)
+
+	var domains []string
+	for cursor.Next(ctx) {
+		var doc map[string]interface{}
+		if val, ok := doc["domain"].(string); ok {
+			domains = append(domains, val)
+		}
+	}
+
+	tmpl := template.Must(template.ParseFiles("templates/admin.html"))
+	tmpl.Execute(w, domains)
+}
+
+func addDomainHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	log.Printf("✅ Added domain: %s", p.Domain)
-	w.WriteHeader(http.StatusCreated)
-	w.Write([]byte("OK"))
+	err := r.ParseForm()
+	if err != nil {
+		http.Error(w, "Parse error", http.StatusBadRequest)
+		return
+	}
+
+	lines := strings.Split(r.FormValue("domains"), "\n")
+	var clean []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			clean = append(clean, line)
+		}
+	}
+
+	if len(clean) == 0 {
+		http.Error(w, "Empty input", http.StatusBadRequest)
+		return
+	}
+
+	uri := getMongoURI()
+	db := os.Getenv("MONGO_DB")
+	coll := os.Getenv("MONGO_COLLECTION")
+
+	if uri == "" || db == "" || coll == "" {
+		http.Error(w, "Mongo config missing", http.StatusInternalServerError)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	client, err := mongo.Connect(ctx, options.Client().ApplyURI(uri))
+	if err != nil {
+		http.Error(w, "Mongo connect error", http.StatusInternalServerError)
+		return
+	}
+	defer client.Disconnect(ctx)
+
+	collection := client.Database(db).Collection(coll)
+	for _, d := range clean {
+		_, _ = collection.InsertOne(ctx, map[string]interface{}{"domain": d})
+		log.Println("✅ Added domain:", d)
+	}
+
+	http.Redirect(w, r, "/admin", http.StatusSeeOther)
 }
 
 func getMongoURI() string {
-	user, err1 := os.ReadFile("/run/secrets/mongo_user")
-	pass, err2 := os.ReadFile("/run/secrets/mongo_password")
+	user, _ := os.ReadFile("/run/secrets/mongo_user")
+	pass, _ := os.ReadFile("/run/secrets/mongo_password")
 	host := os.Getenv("MONGO_HOST")
 
-	if err1 != nil || err2 != nil || host == "" {
-		log.Println("[WARN] Mongo credentials or host missing")
+	if len(user) == 0 || len(pass) == 0 || host == "" {
 		return ""
 	}
 
