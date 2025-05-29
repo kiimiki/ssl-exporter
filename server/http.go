@@ -2,7 +2,7 @@ package server
 
 import (
 	"context"
-	"html/template"
+	"encoding/json"
 	"log"
 	"net/http"
 	"os"
@@ -15,8 +15,6 @@ import (
 
 func Start() {
 	http.Handle("/metrics", http.HandlerFunc(metricsHandler))
-	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
-	http.HandleFunc("/admin", adminPageHandler)
 	http.HandleFunc("/admin/add", addDomainHandler)
 
 	log.Println("📡 Listening on :9115")
@@ -27,75 +25,17 @@ func metricsHandler(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, "metrics")
 }
 
-func adminPageHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	uri := getMongoURI()
-	db := os.Getenv("MONGO_DB")
-	coll := os.Getenv("MONGO_COLLECTION")
-
-	if uri == "" || db == "" || coll == "" {
-		http.Error(w, "MongoDB not configured", http.StatusInternalServerError)
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	client, err := mongo.Connect(ctx, options.Client().ApplyURI(uri))
-	if err != nil {
-		http.Error(w, "Mongo connect error", http.StatusInternalServerError)
-		return
-	}
-	defer client.Disconnect(ctx)
-
-	cursor, err := client.Database(db).Collection(coll).Find(ctx, map[string]interface{}{})
-	if err != nil {
-		http.Error(w, "Mongo query error", http.StatusInternalServerError)
-		return
-	}
-	defer cursor.Close(ctx)
-
-	var domains []string
-	for cursor.Next(ctx) {
-		var doc map[string]interface{}
-		if err := cursor.Decode(&doc); err == nil {
-			if val, ok := doc["domain"].(string); ok {
-				domains = append(domains, val)
-			}
-		}
-	}
-
-	tmpl := template.Must(template.ParseFiles("templates/admin.html"))
-	tmpl.Execute(w, domains)
-}
-
 func addDomainHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	err := r.ParseForm()
-	if err != nil {
-		http.Error(w, "Parse error", http.StatusBadRequest)
-		return
+	var input struct {
+		Domain string `json:"domain"`
 	}
-
-	lines := strings.Split(r.FormValue("domains"), "\n")
-	var clean []string
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			clean = append(clean, line)
-		}
-	}
-
-	if len(clean) == 0 {
-		http.Error(w, "Empty input", http.StatusBadRequest)
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil || strings.TrimSpace(input.Domain) == "" {
+		http.Error(w, "Invalid input", http.StatusBadRequest)
 		return
 	}
 
@@ -119,12 +59,11 @@ func addDomainHandler(w http.ResponseWriter, r *http.Request) {
 	defer client.Disconnect(ctx)
 
 	collection := client.Database(db).Collection(coll)
-	for _, d := range clean {
-		_, _ = collection.InsertOne(ctx, map[string]interface{}{"domain": d})
-		log.Println("✅ Added domain:", d)
-	}
+	_, _ = collection.InsertOne(ctx, map[string]interface{}{"domain": strings.TrimSpace(input.Domain)})
+	log.Println("✅ Added domain:", input.Domain)
 
-	http.Redirect(w, r, "/admin", http.StatusSeeOther)
+	w.WriteHeader(http.StatusCreated)
+	w.Write([]byte("OK"))
 }
 
 func getMongoURI() string {
