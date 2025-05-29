@@ -9,8 +9,6 @@ COPY main.go ./
 COPY ssl/ ./ssl/
 COPY server/ ./server/
 COPY metrics/ ./metrics/
-COPY templates/ ./templates/
-COPY static/ ./static/
 
 # Установка зависимостей
 RUN go get go.mongodb.org/mongo-driver/mongo@v1.13.1
