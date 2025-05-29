@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"log"
 	"net/http"
 	"os"
@@ -15,7 +14,7 @@ import (
 
 func Start() {
 	http.Handle("/metrics", http.HandlerFunc(metricsHandler))
-	http.HandleFunc("/admin/add", addDomainHandler)
+	http.HandleFunc("/admin/add", auth(addDomainHandler))
 
 	log.Println("📡 Listening on :9115")
 	log.Fatal(http.ListenAndServe(":9115", nil))
@@ -25,17 +24,43 @@ func metricsHandler(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, "metrics")
 }
 
+func auth(next http.HandlerFunc) http.HandlerFunc {
+	user := os.Getenv("ADMIN_USER")
+	pass := os.Getenv("ADMIN_PASSWORD")
+	return func(w http.ResponseWriter, r *http.Request) {
+		u, p, ok := r.BasicAuth()
+		if !ok || u != user || p != pass {
+			w.Header().Set("WWW-Authenticate", `Basic realm="Restricted"`)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next(w, r)
+	}
+}
+
 func addDomainHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	var input struct {
-		Domain string `json:"domain"`
+	err := r.ParseForm()
+	if err != nil {
+		http.Error(w, "Parse error", http.StatusBadRequest)
+		return
 	}
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil || strings.TrimSpace(input.Domain) == "" {
-		http.Error(w, "Invalid input", http.StatusBadRequest)
+
+	lines := strings.Split(r.FormValue("domains"), "\n")
+	var clean []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			clean = append(clean, line)
+		}
+	}
+
+	if len(clean) == 0 {
+		http.Error(w, "Empty input", http.StatusBadRequest)
 		return
 	}
 
@@ -59,10 +84,12 @@ func addDomainHandler(w http.ResponseWriter, r *http.Request) {
 	defer client.Disconnect(ctx)
 
 	collection := client.Database(db).Collection(coll)
-	_, _ = collection.InsertOne(ctx, map[string]interface{}{"domain": strings.TrimSpace(input.Domain)})
-	log.Println("✅ Added domain:", input.Domain)
+	for _, d := range clean {
+		_, _ = collection.InsertOne(ctx, map[string]interface{}{"domain": d})
+		log.Println("✅ Added domain:", d)
+	}
 
-	w.WriteHeader(http.StatusCreated)
+	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("OK"))
 }
 
